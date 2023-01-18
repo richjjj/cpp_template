@@ -6,11 +6,11 @@ workdir   := workspace
 srcdir    := src
 exampledir:= examples
 objdir    := objs
-stdcpp    := c++11
+stdcpp    := c++14
 cuda_home := /usr/local/cuda
-cpp_pkg   := ./third_party
+cpp_pkg   := $(shell pwd)/third_party
 syslib    := 
-cuda_arch := 
+cuda_arch := -gencode=arch=compute_75,code=sm_75
 
 # 定义cpp的路径查找和依赖项mk文件
 cpp_srcs := $(shell find $(srcdir) -name "*.cpp")
@@ -58,6 +58,7 @@ include_paths := src    \
 	src/tensorRT/common \
 	src/application     \
 	src/application/track     \
+	src/application/common     \
 	$(include_cuvid)       
 
 # 定义库文件路径，只需要写路径，不需要写-L
@@ -77,8 +78,8 @@ link_librarys := $(foreach item,$(link_librarys),-l$(item))
 # 如果是其他显卡，请修改-gencode=arch=compute_75,code=sm_75为对应显卡的能力
 # 显卡对应的号码参考这里：https://developer.nvidia.com/zh-cn/cuda-gpus#compute
 # 如果是 jetson nano，提示找不到-m64指令，请删掉 -m64选项。不影响结果
-cpp_compile_flags := -std=$(stdcpp) -w -g -O0 -m64 -fPIC -fopenmp -pthread
-cu_compile_flags  := -std=$(stdcpp) -w -g -O0 -m64 $(cuda_arch) -Xcompiler "$(cpp_compile_flags)"
+cpp_compile_flags := -std=$(stdcpp) -w -g -O0 -fPIC -fopenmp -pthread
+cu_compile_flags  := -std=$(stdcpp) -w -g -O0 $(cuda_arch) -Xcompiler "$(cpp_compile_flags)"
 link_flags        := -pthread -fopenmp -Wl,-rpath='$$ORIGIN'
 
 cpp_compile_flags += $(include_paths)
@@ -87,7 +88,7 @@ link_flags        += $(library_paths) $(link_librarys) $(run_paths)
 
 # 如果头文件修改了，这里的指令可以让他自动编译依赖的cpp或者cu文件
 ifneq ($(MAKECMDGOALS), clean)
--include $(cpp_mk) $(cu_mk)
+-include $(cpp_mk) $(cu_mk) $(cpp_mk_example)
 endif
 
 $(name)   : $(workdir)/$(name)
@@ -99,8 +100,14 @@ all       : $(name)
 run       : $(example)
 	@cd $(workdir) && ./$(example) yolo
 
-yolo       : $(example)
-	@cd $(workdir) && ./$(example) yolo
+cuvid_yolo       : $(example)
+	@cd $(workdir) && ./$(example) cuvid_yolo
+
+plate      : $(example)
+	@cd $(workdir) && ./$(example) plate
+
+cuvid_yolopose   : $(example)
+	@cd $(workdir) && ./$(example) cuvid_yolopose
 
 demuxer   : $(example)
 	@cd $(workdir) && ./$(example) demuxer
@@ -108,12 +115,20 @@ demuxer   : $(example)
 hard_decode : $(example)
 	@cd $(workdir) && ./$(example) hard_decode
 
-multi : $(example)
+multi_decode : $(example)
 	@cd $(workdir) && ./$(example) multi
 
 pipeline : $(example)
 	@cd $(workdir) && ./$(example) pipeline
 
+yolo : $(example)
+	@cd $(workdir) && ./$(example) yolo
+
+multi_gpu : $(example)
+	@cd $(workdir) && ./$(example) multi_gpu
+
+json : $(example)
+	@cd $(workdir) && ./$(example) json
 $(workdir)/$(name) : $(cpp_objs) $(cu_objs)
 	@echo Link $@
 	@mkdir -p $(dir $@)
@@ -122,7 +137,7 @@ $(workdir)/$(name) : $(cpp_objs) $(cu_objs)
 $(workdir)/$(example) : $(cpp_objs_example)
 	@echo Link $@
 	@mkdir -p $(dir $@)
-	@$(cc) $^ -o $@ $(link_flags) -L$(workdir) -l$(short_name)
+	@$(cc) $^ -o $@ $(link_flags) -L$(workdir) -l$(short_name) -lopencv_freetype
 
 $(objdir)/%.cpp.o : $(srcdir)/%.cpp
 	@echo Compile CXX $<
@@ -141,6 +156,12 @@ $(objdir)/%.cu.o : $(srcdir)/%.cu
 
 # 编译cpp依赖项，生成mk文件
 $(objdir)/%.cpp.mk : $(srcdir)/%.cpp
+	@echo Compile depends C++ $<
+	@mkdir -p $(dir $@)
+	@$(cc) -M $< -MF $@ -MT $(@:.cpp.mk=.cpp.o) $(cpp_compile_flags)
+
+# 编译cpp依赖项，生成mk文件
+$(objdir)/%.cpp.mk : $(exampledir)/%.cpp
 	@echo Compile depends C++ $<
 	@mkdir -p $(dir $@)
 	@$(cc) -M $< -MF $@ -MT $(@:.cpp.mk=.cpp.o) $(cpp_compile_flags)
